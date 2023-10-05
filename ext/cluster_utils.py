@@ -72,7 +72,7 @@ def find_optimal_clusters(
                 score_silhouette, score_calinski, score_dunn
             )
 
-            print(score_silhouette, score_calinski, score_dunn)
+            # print(score_silhouette, score_calinski, score_dunn)
 
         except ValueError:
             continue  # Skip to the next iteration if an error occurs

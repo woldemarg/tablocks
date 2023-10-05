@@ -1,16 +1,15 @@
 import math
 from typing import Iterable
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers
 
-
 # %%
+
 
 class CatInputBlock(layers.Layer):
     def __init__(self,
-                 cats_length: pd.Series,
+                 cats_length: Iterable[int],
                  cats_embedding_dim: int,
                  **kwargs):
 
@@ -27,29 +26,32 @@ class CatInputBlock(layers.Layer):
              *args,
              **kwargs):
 
-        embedding_outputs = [lr(inputs[:, i]) for i, lr
-                             in enumerate(self.embedding_layers)]
+        embedding_outputs = [
+            embedding_layer(input_layer)
+            for input_layer, embedding_layer
+            in zip(
+                inputs,
+                self.embedding_layers)]
 
         return tf.stack(embedding_outputs, axis=1)
 
 
 # %%
 
-# class NumericalInputBlock(layers.Layer):
-#     def __init__(self,
-#                  units: int,
-#                  num_length: int,
-#                  **kwargs):
+class NumericalInputBlock(layers.Layer):
+    def __init__(self,
+                 units: int,
+                 **kwargs):
 
-#         super().__init__(**kwargs)
+        super().__init__(**kwargs)
 
-#         self.layer = tf.expandlayers.Dense(
-#             units,
-#             activation='relu')
+        self.dense_layer = layers.Dense(
+            units,
+            activation='relu')
 
-#     def call(self, inputs, *args, **kwargs):
+    def call(self, inputs, *args, **kwargs):
 
-#         return self.dense_layer(inputs)
+        return self.dense_layer(inputs)
 
 
 # %%
@@ -195,7 +197,6 @@ class TransformerBlock(layers.Layer):
     def __init__(self,
                  cats_length: Iterable[int],
                  cats_embedding_dim: int,
-                 nums_length: int,
                  nums_dim: int,
                  mha_block_num_heads: int,
                  mha_num_blocks: int,
@@ -205,14 +206,14 @@ class TransformerBlock(layers.Layer):
         super().__init__(**kwargs)
 
         self.cats_length = cats_length
-        self.cats_embedding_dim = cats_embedding_dim
-        self.nums_length = nums_length
         self.nums_dim = nums_dim
+        self.cats_embedding_dim = cats_embedding_dim
         self.mha_block_num_heads = mha_block_num_heads
         self.dropout_rate = dropout_rate
         self.mha_num_blocks = mha_num_blocks
         self.cats_input_block = None
         self.mha_blocks = None
+        self.nums_input_block = None
 
     def build(self, input_shape):
 
@@ -225,15 +226,11 @@ class TransformerBlock(layers.Layer):
             units=self.cats_embedding_dim,
             dr_rate=self.dropout_rate) for _ in range(self.mha_num_blocks)]
 
-        self.mlp_block = MLPBlock(
-            units_lst=[self.nums_dim],
-            normalization_layer=layers.LayerNormalization(epsilon=1e-6),
-            dr_rate=self.dropout_rate)
+        self.nums_input_block = NumericalInputBlock(self.nums_dim)
 
     def call(self, inputs, *args, **kwargs):
 
-        cats_inputs, nums_inputs = (inputs[:, :len(self.cats_length)],
-                                    inputs[:, len(self.cats_length):])
+        cats_inputs, nums_inputs = inputs[:-1], inputs[-1]
 
         cats_features = self.cats_input_block(cats_inputs)
 
@@ -242,12 +239,7 @@ class TransformerBlock(layers.Layer):
 
         cats_features = layers.Flatten()(cats_features)
 
-        nums_features = [tf.expand_dims(nums_inputs[:, i], -1) for i
-                         in range(self.nums_length)]
-
-        nums_features = layers.concatenate(nums_features)
-
-        nums_features = self.mlp_block(nums_features)
+        nums_features = self.nums_input_block(nums_inputs)
 
         features = layers.concatenate(
             [cats_features,

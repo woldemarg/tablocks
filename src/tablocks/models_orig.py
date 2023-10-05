@@ -3,8 +3,8 @@ import tensorflow as tf
 from tensorflow.keras import layers
 from . import blocks
 
-
 # %%
+
 
 class BaseAutoEncoder(tf.keras.Model):
     def __init__(self,
@@ -21,14 +21,15 @@ class BaseAutoEncoder(tf.keras.Model):
 
         super().__init__(**kwargs)
 
-        num_features = len(cats_length) + nums_length
-
-        self.inputs = tf.keras.Input(shape=(num_features,), dtype=tf.float32)
+        self.inputs = [
+            tf.keras.Input(shape=(1,), dtype=tf.float32) for _
+            in cats_length] + [
+                tf.keras.Input(shape=(nums_length,), dtype=tf.float32)
+        ]
 
         self.transformer = blocks.TransformerBlock(
             cats_length,
             cats_embedding_dim,
-            nums_length,
             nums_dim,
             mha_block_num_heads,
             mha_num_blocks,
@@ -54,7 +55,9 @@ class BaseAutoEncoder(tf.keras.Model):
             layers.Dense(v, activation='softmax') for v
             in cats_length]
 
-        self.nums_preds = [layers.Dense(1, activation='sigmoid')] * nums_length
+        self.num_preds = layers.Dense(
+            nums_length,
+            activation='sigmoid')
 
     def call(self, inputs, *args, **kwargs):
 
@@ -66,12 +69,12 @@ class BaseAutoEncoder(tf.keras.Model):
 
         c_preds = [lr(decoded) for lr in self.cats_preds]
 
-        n_preds = [lr(decoded) for lr in self.nums_preds]
+        n_preds = [self.num_preds(decoded)]
 
         return c_preds + n_preds
 
-
 # %%
+
 
 class BaseExtractor(tf.keras.Model):
     def __init__(self, base_model, **kwargs):

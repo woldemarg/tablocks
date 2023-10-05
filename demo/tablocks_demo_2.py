@@ -1,3 +1,5 @@
+from sklearn.pipeline import FeatureUnion
+import shap
 import math
 import pandas as pd
 import numpy as np
@@ -68,32 +70,52 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 categorical_transformers = Pipeline([
     ('ordinal_encoder',
-     OrdinalEncoder(
+     (OrdinalEncoder(
          handle_unknown='use_encoded_value',
          min_frequency=0.05,
-         unknown_value=np.nan)),
+         unknown_value=np.nan)
+      .set_output(transform='pandas'))
+     ),
     ('imputer',
-     SimpleImputer(strategy='most_frequent'))
+     (SimpleImputer(strategy='most_frequent')
+      .set_output(transform='pandas'))
+     )
 ])
 
 numerical_transformer = Pipeline([
     ('imputer',
-     SimpleImputer(strategy='mean')),
+     (SimpleImputer(strategy='mean')
+      .set_output(transform='pandas'))
+     ),
     ('power_transform',
-     PowerTransformer()),
+     (PowerTransformer()
+      .set_output(transform='pandas'))
+     ),
     ('scaler',
-     MinMaxScaler())
+     (MinMaxScaler()
+      .set_output(transform='pandas'))
+     )
 ])
 
 # %%
 
-cats_transformed = pd.DataFrame(
-    (categorical_transformers
-     .fit_transform(X_train[categorical_cols])),
-    columns=categorical_cols)
+# union = FeatureUnion([
+#     ("cats", categorical_transformers),
+#     ("nums", numerical_transformer)
+# ])
+
+
+# f = union.fit_transform([
+#     X_train[categorical_cols],
+#     X_train[numerical_cols] ])
+
+cats_transformed = (categorical_transformers
+                    .fit_transform(X_train[categorical_cols]))
 
 nums_transformed = (numerical_transformer
                     .fit_transform(X_train[numerical_cols]))
+
+train = pd.concat([cats_transformed, nums_transformed], axis=1)
 
 # %%
 
@@ -128,7 +150,7 @@ autoencoder = models.BaseAutoEncoder(
 
 base_learning_rate = 1e-3
 num_epchs = 25
-batch_size = 32
+batch_size = 128
 
 # %%
 
@@ -141,7 +163,8 @@ loss_weights = utils.calculate_weights(
 autoencoder.compile(
     optimizer=tf.keras.optimizers.Adam(
         learning_rate=base_learning_rate),
-    loss=['sparse_categorical_crossentropy'] * cats_length.shape[0] + ['mae'],
+    loss=(['sparse_categorical_crossentropy'] * len(cats_length) +
+          ['mae'] * nums_length),
     loss_weights=loss_weights)
 
 # %%
@@ -156,21 +179,104 @@ stop_callback = tf.keras.callbacks.EarlyStopping(
 
 # %%
 
-train_set = [s for _, s in cats_transformed.items()] + [nums_transformed]
+# train_set = [s for _, s in cats_transformed.items()] + [nums_transformed]
 
 # %%
 
+
+# class TabularSequence(tf.keras.utils.Sequence):
+
+#     def __init__(self, x_set, y_set, batch_size):
+#         self.x, self.y = x_set, y_set
+#         self.batch_size = batch_size
+
+#     def __len__(self):
+#         return math.ceil(len(self.x[0]) / self.batch_size)
+
+#     def __getitem__(self, idx):
+#         low = idx * self.batch_size
+#         high = min(low + self.batch_size, len(self.x[0]))
+#         batch_x = [np.array(e[low:high]).reshape(-1, 1)
+#                    for e in self.x[:-1]] + [self.x[-1][low:high]]
+#         batch_y = [np.array(e[low:high]).reshape(-1, 1)
+#                    for e in self.y[:-1]] + [self.y[-1][low:high]]
+#         return batch_x, batch_y
+
+
+# %%
+# self.x = test_set
+# low, high = 0, 10
+
+# len(train_set[0])
+
+# batch_x = [np.array(e[low:high]).reshape(-1, 1)
+#            for e in test_set[:-1]] + [test_set[-1][low:high]]
+
+# %%
+
+# tabular_data_generator = TabularSequence(train_set, train_set, batch_size)
+# tabular_data_generator_val = TabularSequence(test_set, test_set, batch_size)
+
+# %%
+
+# d = iter(tabular_data_generator)
+# dd = next(d)
+
+# %%
+
+# d = [np.array([1.]),
+#      np.array([3.]),
+#      np.array([1.]),
+#      np.array([2.]),
+#      np.array([0.]),
+#      np.array([1.]),
+#      np.array([1.]),
+#      np.array([0.]),
+#      np.array([[0.26912655,
+#                 0.26513581,
+#                 0.52726954,
+#                 0.,
+#                 0.,
+#                 0.40411106]])]
+
+# %%
+# len(tabular_data_generator)
+
+# autoencoder.predict(dd[0])
+
+# %%
+
+# aue_history = autoencoder.fit(
+#     # x=train_set,
+#     # y=train_set,
+#     tabular_data_generator,
+#     epochs=5,
+#     # batch_size=batch_size,
+#     # validation_split=0.2,
+#     validation_data=tabular_data_generator_val,
+#     # verbose=0,
+#     # workers=8,
+#     # use_multiprocessing=True,
+#     callbacks=[loss_callback, stop_callback]
+# )
+
 aue_history = autoencoder.fit(
-    x=train_set,
-    y=train_set,
+    x=train,
+    y=[train[c] for c in train],
+    # tabular_data_generator,
     epochs=num_epchs,
     batch_size=batch_size,
     validation_split=0.2,
+    # validation_data=tabular_data_generator_val,
     verbose=0,
-    callbacks=[loss_callback, stop_callback])
+    # workers=8,
+    # use_multiprocessing=True,
+    callbacks=[loss_callback, stop_callback]
+)
 
 # %%
 
+# len(tabular_data_generator_val)
 # autoencoder.summary()
 
 # %%
@@ -178,9 +284,11 @@ aue_history = autoencoder.fit(
 extractor = models.BaseExtractor(autoencoder)
 extractor.trainable = False
 
+# extractor.predict(tabular_data_generator_val)
+
 # %%
 
-train_encoded = extractor.predict(train_set)
+train_encoded = extractor.predict(train)
 train_encoded_norm = normalize(train_encoded)
 
 # %%
@@ -238,7 +346,7 @@ class_weights_dct = dict(zip(
 # %%
 
 clf_history = classifier.fit(
-    x=train_set,
+    x=train,
     y=labels,
     epochs=num_epchs,
     validation_split=0.2,
@@ -263,7 +371,7 @@ classifier.summary()
 # %%
 
 clf_history_tune = classifier.fit(
-    x=train_set,
+    x=train,
     y=labels,
     epochs=num_epchs,
     initial_epoch=clf_history.epoch[-1],
@@ -288,13 +396,15 @@ cats_transformed_test = pd.DataFrame(
 nums_transformed_test = (numerical_transformer
                          .transform(X_test[numerical_cols]))
 
-test_set = [s for _, s in cats_transformed_test.items()] + \
-    [nums_transformed_test]
+# test_set = [s for _, s in cats_transformed_test.items()] + \
+#     [nums_transformed_test]
+
+test = pd.concat([cats_transformed_test, nums_transformed_test], axis=1)
 
 # %%
 
-test_cls = np.argmax(classifier.predict(test_set), axis=1)
-test_vec = extractor_tuned.predict(test_set)
+test_cls = np.argmax(classifier.predict(test), axis=1)
+test_vec = extractor_tuned.predict(test)
 
 # %%
 
@@ -306,3 +416,27 @@ visualizer.project(
     data=test_vec,
     labels=test_cls
 )
+
+
+# %%
+
+
+explainer = shap.KernelExplainer(
+    model=extractor.predict, data=train.head(100), link="identity")
+
+shap_values = explainer.shap_values(X=train.iloc[0:100, :], nsamples=1000)
+
+shap.summary_plot(
+    shap_values=shap_values[2], features=train.iloc[0:100, :]
+)
+
+# %%
+
+
+d = [np.abs(np.mean(x, axis=0)).reshape(1, -1) for x in shap_values]
+dd = np.concatenate(d, axis=0)
+m = np.mean(dd, axis=0)
+mm = m / np.sum(m)
+
+
+pd.Series(mm, index=train.columns).sort_values().plot.barh()
