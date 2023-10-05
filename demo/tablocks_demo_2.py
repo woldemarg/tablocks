@@ -1,3 +1,5 @@
+from fastshap import KernelExplainer
+import warnings
 from sklearn.pipeline import FeatureUnion
 import shap
 import math
@@ -72,7 +74,7 @@ categorical_transformers = Pipeline([
     ('ordinal_encoder',
      (OrdinalEncoder(
          handle_unknown='use_encoded_value',
-         min_frequency=0.05,
+         min_frequency=0.025,
          unknown_value=np.nan)
       .set_output(transform='pandas'))
      ),
@@ -125,7 +127,7 @@ nums_length = nums_transformed.shape[1]
 # %%
 
 enc_vecs_dim = min(2**math.ceil(math.log2(data.shape[1])), 64)
-numerics_dim = min(2**math.ceil(math.log2(8 * nums_length)), 1024)
+numerics_dim = min(2**math.ceil(math.log2(32 * nums_length)), 1024)
 
 # %%
 
@@ -420,23 +422,57 @@ visualizer.project(
 
 # %%
 
-
 explainer = shap.KernelExplainer(
-    model=extractor.predict, data=train.head(100), link="identity")
+    model=extractor.predict,
+    data=shap.kmeans(train, 100),
+    link='identity',
+    seed=RND)
 
-shap_values = explainer.shap_values(X=train.iloc[0:100, :], nsamples=1000)
 
-shap.summary_plot(
-    shap_values=shap_values[2], features=train.iloc[0:100, :]
-)
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+
+    shap_values = explainer.shap_values(
+        X=shap.sample(train, 150, random_state=RND),
+        nsamples=100,
+        silent=True,
+        gc_collect=True)
+
+# shap.summary_plot(
+#     shap_values=shap_values[2], features=train.iloc[:150, :]
+# )
 
 # %%
 
 
-d = [np.abs(np.mean(x, axis=0)).reshape(1, -1) for x in shap_values]
+d = [np.abs(np.mean(x, axis=0)).reshape(1, -1) for x
+     in shap_values if np.sum(x) != 0]
+
 dd = np.concatenate(d, axis=0)
 m = np.mean(dd, axis=0)
 mm = m / np.sum(m)
 
 
 pd.Series(mm, index=train.columns).sort_values().plot.barh()
+
+# %%
+ke = KernelExplainer(extractor.predict, train)
+# sv = ke.calculate_shap_values(train.iloc[:10], verbose=False)
+ke.stratify_background_set(10)
+sv = ke.calculate_shap_values(
+    train.iloc[:10],
+    background_fold_to_use=0,
+    verbose=False
+)
+
+a = sv[:, :-1, :]
+
+s = [np.mean(normalize(np.abs(layer), norm='l1', axis=0),
+             axis=1).reshape(-1, 1) for layer in a]
+
+# Concatenate the results along axis 1
+x = np.concatenate(s, axis=1)
+
+# Calculate the mean of x and normalize it
+m = np.mean(x, axis=1)
+mm = m / np.sum(m)
