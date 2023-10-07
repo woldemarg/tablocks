@@ -196,7 +196,7 @@ class TransformerBlock(layers.Layer):
                  cats_length: Iterable[int],
                  cats_embedding_dim: int,
                  nums_length: int,
-                 nums_dim: int,
+                 # nums_dim: int,
                  mha_block_num_heads: int,
                  mha_num_blocks: int,
                  dropout_rate: float,
@@ -207,7 +207,7 @@ class TransformerBlock(layers.Layer):
         self.cats_length = cats_length
         self.cats_embedding_dim = cats_embedding_dim
         self.nums_length = nums_length
-        self.nums_dim = nums_dim
+        # self.nums_dim = nums_dim
         self.mha_block_num_heads = mha_block_num_heads
         self.dropout_rate = dropout_rate
         self.mha_num_blocks = mha_num_blocks
@@ -225,10 +225,12 @@ class TransformerBlock(layers.Layer):
             units=self.cats_embedding_dim,
             dr_rate=self.dropout_rate) for _ in range(self.mha_num_blocks)]
 
-        self.mlp_block = MLPBlock(
-            units_lst=[self.nums_dim],
-            normalization_layer=layers.LayerNormalization(epsilon=1e-6),
-            dr_rate=self.dropout_rate)
+        # self.mlp_block = MLPBlock(
+        #     units_lst=[self.nums_dim],
+        #     normalization_layer=layers.LayerNormalization(epsilon=1e-6),
+        #     dr_rate=self.dropout_rate)
+
+        self.layer_norm = layers.LayerNormalization(epsilon=1e-6)
 
     def call(self, inputs, *args, **kwargs):
 
@@ -242,15 +244,25 @@ class TransformerBlock(layers.Layer):
 
         cats_features = layers.Flatten()(cats_features)
 
+        # cats_features = layers.Dense(
+        #     self.nums_dim,
+        #     activation='relu')(cats_features)
+
         nums_features = [tf.expand_dims(nums_inputs[:, i], -1) for i
                          in range(self.nums_length)]
 
         nums_features = layers.concatenate(nums_features)
 
-        nums_features = self.mlp_block(nums_features)
+        nums_features = self.layer_norm(nums_features)
+
+        # nums_features = self.mlp_block(nums_features)
 
         features = layers.concatenate(
             [cats_features,
              nums_features])
+
+        # weights = layers.Dense(cats_features.shape[-1])(features)
+
+        # feat1ures = tf.multiply(features, weights)
 
         return features

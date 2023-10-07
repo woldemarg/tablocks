@@ -1,7 +1,5 @@
-from fastshap import KernelExplainer
-import warnings
-from sklearn.pipeline import FeatureUnion
-import shap
+import random
+# import warnings
 import math
 import pandas as pd
 import numpy as np
@@ -15,12 +13,15 @@ from sklearn.preprocessing import (
     MinMaxScaler,
     OrdinalEncoder)
 from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.utils.class_weight import compute_class_weight
 import tensorflow as tf
+from fastshap import KernelExplainer
+# import shap
 from prosphera.projector import Projector
 from tensorflow.keras import layers
 from src.tablocks import blocks, models, utils
-import ext.cluster_utils as cluster
+# import ext.cluster_utils as cluster
 
 # %%
 
@@ -40,25 +41,30 @@ import ext.cluster_utils as cluster
 
 RND = 1234
 tf.random.set_seed(RND)
+np.random.seed(RND)
+random.seed(RND)
 
 # %%
 
-raw = fetch_openml(name='adult', version=4, parser='auto')
+# raw = fetch_openml(name='adult', version=4, parser='auto')
 # raw = fetch_openml(name='KDDCup09_churn', parser='auto')
+raw = fetch_openml(name='kick', version=1, parser='auto')
+# raw = fetch_openml(name='higgs', version=1, parser='auto')
 
 data, target = (raw['data'], raw['target'])
+# data['class'] = target.astype(str)
 
 # %%
 
-categorical_cols = (data
-                    .select_dtypes(exclude=['number'])
-                    .columns
-                    .tolist())
+# categorical_cols = (data
+#                     .select_dtypes(exclude=['number'])
+#                     .columns
+#                     .tolist())
 
-numerical_cols = (data
-                  .select_dtypes(include=['number'])
-                  .columns
-                  .tolist())
+# numerical_cols = (data
+#                   .select_dtypes(include=['number'])
+#                   .columns
+#                   .tolist())
 
 # %%
 
@@ -70,74 +76,82 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 # %%
 
-categorical_transformers = Pipeline([
+categorical_transformer = Pipeline([
     ('ordinal_encoder',
-     (OrdinalEncoder(
+     OrdinalEncoder(
          handle_unknown='use_encoded_value',
-         min_frequency=0.025,
-         unknown_value=np.nan)
-      .set_output(transform='pandas'))
-     ),
+         min_frequency=0.01,
+         unknown_value=np.nan)),
     ('imputer',
-     (SimpleImputer(strategy='most_frequent')
-      .set_output(transform='pandas'))
-     )
+     SimpleImputer(strategy='most_frequent',
+                   keep_empty_features=True))
 ])
 
 numerical_transformer = Pipeline([
     ('imputer',
-     (SimpleImputer(strategy='mean')
-      .set_output(transform='pandas'))
-     ),
+     SimpleImputer(strategy='mean',
+                   keep_empty_features=True)),
     ('power_transform',
-     (PowerTransformer()
-      .set_output(transform='pandas'))
-     ),
+     PowerTransformer()),
     ('scaler',
-     (MinMaxScaler()
-      .set_output(transform='pandas'))
-     )
+     MinMaxScaler())
 ])
 
 # %%
 
-# union = FeatureUnion([
-#     ("cats", categorical_transformers),
-#     ("nums", numerical_transformer)
-# ])
+preprocessor = (ColumnTransformer(
+    transformers=[
+        ('cat',
+         categorical_transformer,
+         # categorical_cols
+         make_column_selector(dtype_exclude=np.number)
+         ),
+        ('num',
+         numerical_transformer,
+         # numerical_cols
+         make_column_selector(dtype_include=np.number)
+         )],
+    n_jobs=-1,
+    verbose_feature_names_out=False)
+    .set_output(transform='pandas'))
 
-
-# f = union.fit_transform([
-#     X_train[categorical_cols],
-#     X_train[numerical_cols] ])
-
-cats_transformed = (categorical_transformers
-                    .fit_transform(X_train[categorical_cols]))
-
-nums_transformed = (numerical_transformer
-                    .fit_transform(X_train[numerical_cols]))
-
-train = pd.concat([cats_transformed, nums_transformed], axis=1)
 
 # %%
 
-cats_length = cats_transformed.nunique()
-nums_length = nums_transformed.shape[1]
+try:
+    train = preprocessor.fit_transform(X_train)
+except Exception as err:
+    print(f'{err}')
+    preprocessor.set_params(num__power_transform='passthrough')
+    train = preprocessor.fit_transform(X_train)
 
 # %%
 
-enc_vecs_dim = min(2**math.ceil(math.log2(data.shape[1])), 64)
-numerics_dim = min(2**math.ceil(math.log2(32 * nums_length)), 1024)
+oe = preprocessor.named_transformers_['cat'].named_steps['ordinal_encoder']
+cats_length = [len(x) for x in oe.categories_]
+
+ms = preprocessor.named_transformers_['num'].named_steps['scaler']
+nums_length = ms.n_features_in_
+
+# cats_length = train[categorical_cols].nunique()
+# nums_length = len(numerical_cols)
+
+# %%
+
+base_units = 32
+
+enc_vecs_dim = min(2**math.floor(math.log2(data.shape[1])), 64)
+# numerics_dim = min(2**math.ceil(math.log2(base_units * nums_length)), 256)
 
 # %%
 
 params = {
-    'cats_embedding_dim': 32,
-    'nums_dim': numerics_dim,
+    'cats_embedding_dim': base_units,
+    # 'nums_dim': numerics_dim,
     'mha_block_num_heads': 4,
     'mha_num_blocks': 2,
     'dropout_rate': 0.1,
-    'enc_dec_num_steps': 4,
+    'enc_dec_num_steps': 3,
     'enc_vecs_dim': enc_vecs_dim
 }
 
@@ -156,9 +170,7 @@ batch_size = 128
 
 # %%
 
-loss_weights = utils.calculate_weights(
-    cats_transformed,
-    nums_transformed)
+loss_weights = utils.calculate_weights(train, nums_length)
 
 # %%
 
@@ -295,7 +307,8 @@ train_encoded_norm = normalize(train_encoded)
 
 # %%
 
-optimal_clusters = cluster.find_optimal_clusters(train_encoded_norm)
+# optimal_clusters = cluster.find_optimal_clusters(train_encoded_norm)
+optimal_clusters = 7
 
 # %%
 
@@ -351,6 +364,7 @@ clf_history = classifier.fit(
     x=train,
     y=labels,
     epochs=num_epchs,
+    batch_size=batch_size,
     validation_split=0.2,
     class_weight=class_weights_dct,
     callbacks=[stop_callback]
@@ -376,6 +390,7 @@ clf_history_tune = classifier.fit(
     x=train,
     y=labels,
     epochs=num_epchs,
+    batch_size=batch_size,
     initial_epoch=clf_history.epoch[-1],
     validation_split=0.2,
     class_weight=class_weights_dct,
@@ -390,18 +405,7 @@ extractor_tuned = tf.keras.Model(
 
 # %%
 
-cats_transformed_test = pd.DataFrame(
-    (categorical_transformers
-     .transform(X_test[categorical_cols])),
-    columns=categorical_cols)
-
-nums_transformed_test = (numerical_transformer
-                         .transform(X_test[numerical_cols]))
-
-# test_set = [s for _, s in cats_transformed_test.items()] + \
-#     [nums_transformed_test]
-
-test = pd.concat([cats_transformed_test, nums_transformed_test], axis=1)
+test = preprocessor.transform(X_test)
 
 # %%
 
@@ -416,27 +420,29 @@ visualizer = Projector()
 
 visualizer.project(
     data=test_vec,
+    # data=train_encoded,
     labels=test_cls
+    # labels=y_train
 )
 
 
 # %%
 
-explainer = shap.KernelExplainer(
-    model=extractor.predict,
-    data=shap.kmeans(train, 100),
-    link='identity',
-    seed=RND)
+# explainer = shap.KernelExplainer(
+#     model=extractor.predict,
+#     data=shap.kmeans(train, 100),
+#     link='identity',
+#     seed=RND)
 
 
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore')
+# with warnings.catch_warnings():
+#     warnings.simplefilter('ignore')
 
-    shap_values = explainer.shap_values(
-        X=shap.sample(train, 150, random_state=RND),
-        nsamples=100,
-        silent=True,
-        gc_collect=True)
+#     shap_values = explainer.shap_values(
+#         X=shap.sample(train, 150, random_state=RND),
+#         nsamples=100,
+#         silent=True,
+#         gc_collect=True)
 
 # shap.summary_plot(
 #     shap_values=shap_values[2], features=train.iloc[:150, :]
@@ -445,22 +451,22 @@ with warnings.catch_warnings():
 # %%
 
 
-d = [np.abs(np.mean(x, axis=0)).reshape(1, -1) for x
-     in shap_values if np.sum(x) != 0]
+# d = [np.abs(np.mean(x, axis=0)).reshape(1, -1) for x
+#      in shap_values if np.sum(x) != 0]
 
-dd = np.concatenate(d, axis=0)
-m = np.mean(dd, axis=0)
-mm = m / np.sum(m)
+# dd = np.concatenate(d, axis=0)
+# m = np.mean(dd, axis=0)
+# mm = m / np.sum(m)
 
 
-pd.Series(mm, index=train.columns).sort_values().plot.barh()
+# pd.Series(mm, index=train.columns).sort_values().plot.barh()
 
 # %%
-ke = KernelExplainer(extractor.predict, train)
+ke = KernelExplainer(extractor.predict, train.sample(1000))
 # sv = ke.calculate_shap_values(train.iloc[:10], verbose=False)
-ke.stratify_background_set(10)
+ke.stratify_background_set(50)
 sv = ke.calculate_shap_values(
-    train.iloc[:10],
+    train.iloc[:100],
     background_fold_to_use=0,
     verbose=False
 )
@@ -476,3 +482,5 @@ x = np.concatenate(s, axis=1)
 # Calculate the mean of x and normalize it
 m = np.mean(x, axis=1)
 mm = m / np.sum(m)
+
+pd.Series(mm, index=train.columns).sort_values().plot.barh()

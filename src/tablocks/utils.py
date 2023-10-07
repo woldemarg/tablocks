@@ -27,10 +27,14 @@ def calculate_entropy(series: pd.Series) -> float:
     return stats.entropy(category_probabilities, base=2)
 
 
-# categorical_series, numerical_series = cats_transformed, nums_transformed
+def calculate_weights(
+        data: pd.DataFrame,
+        nums_length: int) -> np.array:
 
+    categorical_series, numerical_series = (
+        data.iloc[:, :-nums_length],
+        data.iloc[:, -nums_length:])
 
-def calculate_weights(categorical_series, numerical_series):
     # Calculate entropy for categorical data
     categorical_entropy = (categorical_series
                            .apply(calculate_entropy))
@@ -38,9 +42,7 @@ def calculate_weights(categorical_series, numerical_series):
     # Calculate entropy for numerical data
     numerical_entropy = (numerical_series
                          .apply(pd.qcut, q=25, duplicates='drop')
-                         .apply(calculate_entropy)
-                         # .max()
-                         )
+                         .apply(calculate_entropy))
 
     weights = normalize(
         (np.concatenate(

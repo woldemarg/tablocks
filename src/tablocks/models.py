@@ -11,7 +11,7 @@ class BaseAutoEncoder(tf.keras.Model):
                  cats_length: Iterable[int],
                  nums_length: int,
                  cats_embedding_dim: int,
-                 nums_dim: int,
+                 # nums_dim: int,
                  mha_block_num_heads: int,
                  mha_num_blocks: int,
                  dropout_rate: float,
@@ -29,13 +29,14 @@ class BaseAutoEncoder(tf.keras.Model):
             cats_length,
             cats_embedding_dim,
             nums_length,
-            nums_dim,
+            # nums_dim,
             mha_block_num_heads,
             mha_num_blocks,
             dropout_rate)
 
-        cats_dim = cats_length.shape[0] * cats_embedding_dim
-        features_dim = cats_dim + nums_dim
+        cats_dim = len(cats_length) * cats_embedding_dim
+        # features_dim = cats_dim + nums_dim
+        features_dim = cats_dim + nums_length
 
         self.encoder = blocks.EncoderDecoder(
             num_steps=enc_dec_num_steps,
